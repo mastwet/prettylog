@@ -1,0 +1,25 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / coverage
+*.out
+*.test
+coverage.html
+coverage.txt
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local scratch
+out-raw.txt
+preview.html
+preview.png
+render_preview.py

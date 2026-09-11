@@ -1,0 +1,23 @@
+{
+  "level": "info",
+  "color": "auto",
+  "show_source": false,
+  "time_format": "15:04:05.000",
+  "palette": {
+    "info":       { "fg": "#042F2E", "bg": "#0D9488", "fg16": "black",    "bg16": "br-cyan" },
+    "warn":       { "fg": "#FEF3C7", "bg": "#B45309", "fg16": "black",    "bg16": "br-yellow" },
+    "error":      { "fg": "#FFF1F2", "bg": "#BE185D", "fg16": "br-white", "bg16": "br-red" },
+    "debug":      { "fg": "#E2E8F0", "bg": "#334155", "fg16": "br-white", "bg16": "br-black" },
+    "fatal":      { "fg": "#F3E8FF", "bg": "#7E22CE", "fg16": "br-white", "bg16": "br-magenta" },
+    "key":        { "fg": "#5EEAD4", "fg16": "br-cyan" },
+    "string":     { "fg": "#A7F3D0", "fg16": "br-green" },
+    "number":     { "fg": "#FBBF24", "fg16": "yellow" },
+    "bool":       { "fg": "#C4B5FD", "fg16": "magenta" },
+    "error_text": { "fg": "#FB7185", "fg16": "br-red" },
+    "message":    { "fg": "#E2F5F0", "fg16": "br-white" },
+    "dim":        { "fg": "#6E8A8A", "fg16": "br-black" },
+    "muted":      { "fg": "#506868", "fg16": "br-black" },
+    "teal":       { "fg": "#2DD4BF", "fg16": "cyan" },
+    "teal_bright":{ "fg": "#5EEAD4", "fg16": "br-cyan" }
+  }
+}

@@ -56,6 +56,46 @@ h := prettylog.NewHandler(os.Stderr, prettylog.WithColor(prettylog.Color16))
 logger := slog.New(h)
 ```
 
+### Attribute scopes and redaction
+
+Attributes keep the group scope in which they were attached:
+
+```go
+logger.With("run_id", "r1").
+    WithGroup("model").
+    With("provider", "deepseek").
+    WithGroup("usage").
+    Info("call", "tokens", 7)
+// ... call │ run_id="r1" model.provider="deepseek" model.usage.tokens=7
+```
+
+`WithReplaceAttr` receives resolved leaf attributes and their full group path.
+It runs on user attributes, including time values, and the optional `source`
+attribute. It does not run on the timestamp, level, message or `WithSource`
+columns. Return `slog.Attr{}` to remove an attribute.
+
+To rewrite or remove source information, enable `Options.AddSource`:
+
+```go
+log := prettylog.New(os.Stderr,
+    func(o *prettylog.Options) { o.AddSource = true },
+    prettylog.WithReplaceAttr(func(groups []string, a slog.Attr) slog.Attr {
+        if len(groups) == 0 && a.Key == slog.SourceKey {
+            return slog.Attr{}
+        }
+        return a
+    }),
+)
+```
+
+The source hook receives a `*slog.Source`; without a program counter, the
+source attribute is omitted. `WithSource(true)` independently enables the
+file:line column.
+
+Messages, errors, keys and other values escape line breaks and control
+characters so each record stays on one physical line. String values also
+escape quotes and backslashes. Empty or removed attributes leave no separator.
+
 ## Color policy
 
 | Mode | Behavior |
@@ -145,7 +185,12 @@ go run . -level debug
 
 ```bash
 go test ./...
+go test -race ./...
+go vet ./...
 ```
+
+GitHub Actions runs the suite and vet on Linux and Windows, plus the race
+detector on Linux.
 
 ## License
 

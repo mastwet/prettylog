@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Handler is a slog.Handler that renders single-line, colorized records.
@@ -24,6 +25,12 @@ type Handler struct {
 	w    io.Writer
 	mu   *sync.Mutex
 	// pre-attached attrs/groups from WithAttrs / WithGroup
+	attrs  []scopedAttrs
+	groups []string
+}
+
+// Each batch retains the groups that were open when WithAttrs was called.
+type scopedAttrs struct {
 	attrs  []slog.Attr
 	groups []string
 }
@@ -65,44 +72,52 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	var b strings.Builder
 
 	// Timestamp
-	b.WriteString(h.pal.timeText(r.Time.Format(h.opts.TimeFormat)))
-	b.WriteString("  ")
+	if !r.Time.IsZero() {
+		b.WriteString(h.pal.timeText(singleLine(r.Time.Format(h.opts.TimeFormat))))
+		b.WriteString("  ")
+	}
 
 	// Level badge
 	b.WriteString(h.pal.levelBadge(r.Level.String()))
 	b.WriteString("  ")
 
-	// Source column
-	if h.opts.ShowSource {
-		if pc := r.PC; pc != 0 {
-			fs := runtime.CallersFrames([]uintptr{pc})
-			if f, _ := fs.Next(); f.File != "" {
-				b.WriteString(h.pal.source(trimSource(f.File, f.Line)))
-				b.WriteString("  ")
-			}
+	var source *slog.Source
+	if (h.opts.ShowSource || h.opts.AddSource) && r.PC != 0 {
+		fs := runtime.CallersFrames([]uintptr{r.PC})
+		if f, _ := fs.Next(); f.File != "" {
+			source = &slog.Source{Function: f.Function, File: f.File, Line: f.Line}
 		}
+	}
+	if h.opts.ShowSource && source != nil {
+		b.WriteString(h.pal.source(singleLine(trimSource(source.File, source.Line))))
+		b.WriteString("  ")
 	}
 
 	// Message
 	if r.Message == "" {
 		b.WriteString(h.pal.sep("(no message)"))
 	} else {
-		b.WriteString(h.pal.message(r.Message))
+		b.WriteString(h.pal.message(singleLine(r.Message)))
 	}
 
-	// Attrs: handler-bound + record
-	attrs := make([]slog.Attr, 0, len(h.attrs)+r.NumAttrs())
-	attrs = append(attrs, h.attrs...)
+	// Source is a record-level attribute, outside any WithGroup scope.
+	var parts []string
+	if h.opts.AddSource && source != nil {
+		parts = append(parts, h.formatAttr(nil, slog.Any(slog.SourceKey, source))...)
+	}
+	for _, batch := range h.attrs {
+		parts = append(parts, h.formatAttrs(batch.attrs, batch.groups)...)
+	}
 	r.Attrs(func(a slog.Attr) bool {
-		attrs = append(attrs, a)
+		parts = append(parts, h.formatAttr(h.groups, a)...)
 		return true
 	})
 
-	if len(attrs) > 0 {
+	if len(parts) > 0 {
 		b.WriteString("  ")
 		b.WriteString(h.pal.sep("│"))
 		b.WriteString("  ")
-		b.WriteString(h.formatAttrs(attrs, h.groups))
+		b.WriteString(stringsJoin(parts, "  "))
 	}
 
 	b.WriteByte('\n')
@@ -119,9 +134,9 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return h
 	}
 	nh := *h
-	nh.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	nh.attrs = make([]scopedAttrs, 0, len(h.attrs)+1)
 	nh.attrs = append(nh.attrs, h.attrs...)
-	nh.attrs = append(nh.attrs, attrs...)
+	nh.attrs = append(nh.attrs, scopedAttrs{attrs: attrs, groups: h.groups})
 	return &nh
 }
 
@@ -135,55 +150,51 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 	return &nh
 }
 
-func (h *Handler) formatAttrs(attrs []slog.Attr, groups []string) string {
+func (h *Handler) formatAttrs(attrs []slog.Attr, groups []string) []string {
 	parts := make([]string, 0, len(attrs))
-	prefix := ""
-	if len(groups) > 0 {
-		prefix = strings.Join(groups, ".") + "."
-	}
 	for _, a := range attrs {
-		parts = append(parts, h.formatAttr(prefix, a)...)
+		parts = append(parts, h.formatAttr(groups, a)...)
 	}
-	return stringsJoin(parts, "  ")
+	return parts
 }
 
-func (h *Handler) formatAttr(prefix string, a slog.Attr) []string {
-	if h.opts.ReplaceAttr != nil {
-		// Only non-time attrs go through ReplaceAttr (slog convention).
-		if a.Value.Kind() != slog.KindTime {
-			a = h.opts.ReplaceAttr(h.groups, a)
-		}
-	}
+func (h *Handler) formatAttr(groups []string, a slog.Attr) []string {
 	a.Value = a.Value.Resolve()
 	if a.Equal(slog.Attr{}) {
 		return nil
+	}
+	if a.Value.Kind() != slog.KindGroup && h.opts.ReplaceAttr != nil {
+		a = h.opts.ReplaceAttr(groups, a)
+		a.Value = a.Value.Resolve()
+		if a.Equal(slog.Attr{}) {
+			return nil
+		}
 	}
 
 	// Flatten groups as parent.child.
 	if a.Value.Kind() == slog.KindGroup {
 		inner := a.Value.Group()
 		if a.Key != "" {
-			prefix = prefix + a.Key + "."
+			groups = append(append([]string(nil), groups...), a.Key)
 		}
 		var out []string
 		for _, ga := range inner {
-			out = append(out, h.formatAttr(prefix, ga)...)
+			out = append(out, h.formatAttr(groups, ga)...)
 		}
 		return out
 	}
 
-	key := prefix + a.Key
-	return []string{h.pal.key(key) + "=" + h.formatValue(a.Value)}
+	key := a.Key
+	if len(groups) > 0 {
+		key = strings.Join(groups, ".") + "." + key
+	}
+	return []string{h.pal.key(singleLine(key)) + "=" + h.formatValue(a.Value)}
 }
 
 func (h *Handler) formatValue(v slog.Value) string {
 	switch v.Kind() {
 	case slog.KindString:
-		s := v.String()
-		if strings.ContainsAny(s, "\n\r\t") {
-			return h.pal.quoted(strconv.Quote(s))
-		}
-		return h.pal.stringValue(s)
+		return h.pal.quoted(strconv.Quote(v.String()))
 	case slog.KindInt64:
 		return h.pal.number(strconv.FormatInt(v.Int64(), 10))
 	case slog.KindUint64:
@@ -198,19 +209,44 @@ func (h *Handler) formatValue(v slog.Value) string {
 		return h.pal.timeText(v.Time().Format(time.RFC3339))
 	case slog.KindAny:
 		switch x := v.Any().(type) {
+		case *slog.Source:
+			if x == nil {
+				return h.pal.sep("null")
+			}
+			return h.pal.source(singleLine(trimSource(x.File, x.Line)))
 		case error:
 			if x == nil {
 				return h.pal.sep("null")
 			}
-			return h.pal.errText(x.Error())
+			return h.pal.errText(singleLine(x.Error()))
 		case fmt.Stringer:
-			return h.pal.stringValue(x.String())
+			return h.pal.quoted(strconv.Quote(x.String()))
 		default:
-			return h.pal.quoted(fmt.Sprint(x))
+			return h.pal.quoted(singleLine(fmt.Sprint(x)))
 		}
 	default:
-		return h.pal.quoted(fmt.Sprint(v.Any()))
+		return h.pal.quoted(singleLine(fmt.Sprint(v.Any())))
 	}
+}
+
+// Escape user-supplied controls before adding the palette's ANSI sequences.
+func singleLine(s string) string {
+	isControl := func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	}
+	if strings.IndexFunc(s, isControl) < 0 {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if isControl(r) {
+			quoted := strconv.QuoteRune(r)
+			b.WriteString(quoted[1 : len(quoted)-1])
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // HumanDuration formats d with a readable precision.

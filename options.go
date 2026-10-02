@@ -22,11 +22,15 @@ type Options struct {
 	ShowSource bool
 	// Color is the color policy. Defaults to ColorAuto.
 	Color ColorMode
-	// AddSource forces slog source attributes through the normal path.
-	// Prefer ShowSource for the pretty column.
+	// AddSource adds a record-level source attribute when a source is available.
+	// ReplaceAttr receives its value as *slog.Source. Prefer ShowSource for the
+	// separate file:line column.
 	AddSource bool
-	// ReplaceAttr, when set, is called for every non-time attribute
-	// before rendering. Return a zero Attr to drop it.
+	// ReplaceAttr, when set, rewrites resolved non-group attributes, including
+	// time-valued attributes and AddSource. The groups argument contains the
+	// attribute's full group path and must not be retained or modified.
+	// Return a zero Attr to drop it. The time, level, message and ShowSource
+	// columns are not passed to this hook.
 	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
 	// Config, when non-nil, supplies palette overrides and default
 	// level/color/time when those options are unset.

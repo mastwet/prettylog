@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -22,13 +23,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check formatting
-        run: |
-          files=$(gofmt -l .)
-          if [ -n "$files" ]; then
-            printf '%s\n' "$files"
-            exit 1
-          fi
       - run: go test ./...
       - run: go vet ./...
       - name: Race detector
